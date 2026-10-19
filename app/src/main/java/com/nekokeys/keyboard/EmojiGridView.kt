@@ -12,7 +12,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.widget.OverScroller
 import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.max
 
 /**
@@ -25,8 +24,16 @@ class EmojiGridView(context: Context) : View(context) {
     var onScrolled: ((Int) -> Unit)? = null   // index of the first emoji in the top visible row
     private var lastFirst = -1
 
-    fun setItems(list: List<String>, keepOffset: Boolean) {
+    /** Item indices where each section (Recents, Smileys, ...) begins. Every section starts on a fresh row. */
+    private var sections: IntArray = intArrayOf(0)
+    private var rowFirst = IntArray(0)   // index of the first item in each row
+    private var rowLen = IntArray(0)   // items in each row (the last row of a section can be short)
+    private var layoutCols = -1
+
+    fun setItems(list: List<String>, keepOffset: Boolean, sectionStarts: IntArray = intArrayOf(0)) {
         items = list
+        sections = sectionStarts
+        layoutCols = -1                  // force the row layout to be rebuilt
         scroller.forceFinished(true)
         offset = if (keepOffset) offset.coerceIn(0f, maxScroll()) else 0f
         lastFirst = -1
@@ -36,14 +43,15 @@ class EmojiGridView(context: Context) : View(context) {
 
     /** Smoothly scrolls so the row containing item [index] is at the top. */
     fun scrollToIndex(index: Int) {
-        val target = ((index / cols()) * cell).coerceIn(0f, maxScroll())
+        val target = (rowOf(index) * cell).coerceIn(0f, maxScroll())
         scroller.forceFinished(true)
         scroller.startScroll(0, offset.toInt(), 0, (target - offset).toInt(), 260)
         postInvalidateOnAnimation()
     }
 
     private fun notifyScrolled() {
-        val first = (offset / cell).toInt() * cols()
+        val n = rowTotal()
+        val first = if (n == 0) 0 else rowFirst[(offset / cell).toInt().coerceIn(0, n - 1)]
         if (first != lastFirst) { lastFirst = first; onScrolled?.invoke(first) }
     }
     var textColor = Color.WHITE
@@ -69,9 +77,34 @@ class EmojiGridView(context: Context) : View(context) {
     private val cfg = ViewConfiguration.get(context)
 
     private fun cols() = max(1, (width / cell).toInt())
-    private fun maxScroll(): Float {
-        val rows = ceil(items.size / cols().toFloat())
-        return max(0f, rows * cell - height)
+    private fun maxScroll(): Float = max(0f, rowTotal() * cell - height)
+
+    /** Lays the flat list out in rows, starting a new row at every section boundary. */
+    private fun rowTotal(): Int {
+        val c = cols()
+        if (c != layoutCols) {
+            layoutCols = c
+            val bounds = (listOf(0) + sections.toList() + items.size)
+                .filter { it in 0..items.size }.distinct().sorted()
+            val rf = ArrayList<Int>()
+            val rc = ArrayList<Int>()
+            for (k in 0 until bounds.size - 1) {
+                var i = bounds[k]
+                val end = bounds[k + 1]
+                while (i < end) { rf.add(i); rc.add(minOf(c, end - i)); i += c }
+            }
+            rowFirst = rf.toIntArray()
+            rowLen = rc.toIntArray()
+        }
+        return rowFirst.size
+    }
+
+    /** Row that contains item [index]. */
+    private fun rowOf(index: Int): Int {
+        val n = rowTotal()
+        var r = 0
+        for (k in 0 until n) if (rowFirst[k] <= index) r = k else break
+        return r
     }
 
     override fun onDraw(c: Canvas) {
@@ -81,11 +114,11 @@ class EmojiGridView(context: Context) : View(context) {
         paint.color = textColor
         paint.getFontMetrics(fm)
         val base = -(fm.ascent + fm.descent) / 2f
+        val rows = rowTotal()
         val first = (offset / cell).toInt().coerceAtLeast(0)
-        val last = ((offset + height) / cell).toInt()
-        for (row in first..last) for (col in 0 until cols) {
-            val i = row * cols + col
-            if (i >= items.size) return
+        val last = minOf(((offset + height) / cell).toInt(), rows - 1)
+        for (row in first..last) for (col in 0 until rowLen[row]) {
+            val i = rowFirst[row] + col
             c.drawText(items[i], col * cw + cw / 2f, row * cell - offset + cell / 2f + base, paint)
         }
     }
@@ -102,8 +135,8 @@ class EmojiGridView(context: Context) : View(context) {
         val cols = cols()
         val col = (x / (width / cols.toFloat())).toInt().coerceIn(0, cols - 1)
         val row = ((y + offset) / cell).toInt()
-        val i = row * cols + col
-        return if (i in items.indices) i else null
+        if (row !in 0 until rowTotal() || col >= rowLen[row]) return null
+        return rowFirst[row] + col
     }
 
     private fun cancelLong() { longRun?.let { ui.removeCallbacks(it) }; longRun = null }

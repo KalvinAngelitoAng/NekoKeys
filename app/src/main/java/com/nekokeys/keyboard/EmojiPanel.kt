@@ -220,7 +220,7 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
         }
         shownBases = bases
         grid.textColor = theme.text
-        grid.setItems(all, !resetScroll)
+        grid.setItems(all, !resetScroll, catStart.copyOf())
         resetScroll = false
     }
 
