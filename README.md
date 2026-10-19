@@ -297,7 +297,7 @@ See `LICENSE` and `NOTICE.md` for licensing details.
 ## Support & Feedback
 
 - **Issues:** https://github.com/KalvinAngelitoAng/NekoKeys/issues
-- **Contact:** [Your contact info if desired]
+- **Contact:** kalvinangelitoang88@gmail.com
 
 ---
 
