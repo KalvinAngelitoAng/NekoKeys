@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- head + two ears are clockwise, eyes and nose counter-clockwise (they become holes) -->
+    <path
+        android:pathData="M30,60a24,20 0 1 1 48,0a24,20 0 1 1 -48,0zM31,56L33,30L51,42zM77,56L57,42L75,30zM45,60m-3.2,0a3.2,3.2 0 1 0 6.4,0a3.2,3.2 0 1 0 -6.4,0M63,60m-3.2,0a3.2,3.2 0 1 0 6.4,0a3.2,3.2 0 1 0 -6.4,0M51,65L54,69L57,65z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="30" android:startY="30" android:endX="78" android:endY="80"
+                android:type="linear">
+                <item android:color="#D9C8FF" android:offset="0" />
+                <item android:color="#8E5CF0" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

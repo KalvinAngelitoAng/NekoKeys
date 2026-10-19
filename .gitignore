@@ -1,0 +1,41 @@
+# Gradle
+.gradle/
+build/
+*.apk
+*.aab
+gradle.properties
+
+# Android Studio
+.idea/
+*.iml
+local.properties
+
+# IDE
+out/
+*.iws
+*.class
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Kotlin
+*.kt.bak
+
+# Editor
+*.swp
+*.swo
+*~.nib
+
+# Build
+build/
+dist/
+
+# Other
+.classpath
+.project
+.settings/
