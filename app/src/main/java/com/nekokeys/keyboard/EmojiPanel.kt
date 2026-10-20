@@ -29,6 +29,8 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
         fun onPasteImage(uri: Uri, mime: String): Boolean
         fun onPickMedia()
         fun onClosePanel()
+        /** Search opened (true) or closed (false). While open, the host sends typed keys to [searchChar]. */
+        fun onEmojiSearch(active: Boolean)
     }
 
     private val KAOMOJI = listOf(
@@ -37,6 +39,15 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
         "(ง •̀_•́)ง", "(｡•́︿•̀｡)", "(´• ω •`)", "orz", "<(‾︶‾)>", "(☆▽☆)", "(*´▽`*)", "\\(^o^)/",
         "( ˘▽˘)っ♨", "(`･ω･´)", "(^_−)−☆", "(ᵔᴥᵔ)", "(つ✧ω✧)つ"
     )
+
+    private val indo = ctx.resources.configuration.locales[0].language == "id"
+    // titles above each section: index 0 = recents, 1..9 = the nine Unicode groups (same order as catStart)
+    private val CAT_LABELS = if (indo)
+        arrayOf("Emoji terbaru", "Senyum dan emosi", "Orang", "Hewan dan alam", "Makanan dan minuman",
+            "Perjalanan dan tempat", "Aktivitas", "Objek", "Simbol", "Bendera")
+    else
+        arrayOf("Recent emoji", "Smileys and emotions", "People", "Animals and nature", "Food and drink",
+            "Travel and places", "Activities", "Objects", "Symbols", "Flags")
 
     private var theme = THEMES[0]
     private var transparent = false
@@ -54,6 +65,19 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
     private val colScroll = ScrollView(ctx)
     private val colGrid = GridLayout(ctx)
     private val toneBar = LinearLayout(ctx)
+    private val bottom = LinearLayout(ctx).apply { gravity = Gravity.CENTER_VERTICAL }
+
+    // search: a query box on top, results in the same grid; typing comes from the keyboard shown below the panel
+    private var searching = false
+    private val query = StringBuilder()
+    private val searchBar = LinearLayout(ctx).apply { gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE }
+    private val searchBack = IconView(ctx, IconView.BACK)
+    private val searchBox = LinearLayout(ctx).apply { gravity = Gravity.CENTER_VERTICAL }
+    private val searchGlass = IconView(ctx, IconView.SEARCH)
+    private val queryView = TextView(ctx)
+    private val searchClear = IconView(ctx, IconView.CLOSE)
+    private val searchEmpty = TextView(ctx)
+    private val searchOpen = IconView(ctx, IconView.SEARCH)
     private val abc = TextView(ctx)
     private val tabEmoji = IconView(ctx, IconView.FACE)
     private val tabKao = TextView(ctx)
@@ -67,6 +91,19 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
     init {
         orientation = VERTICAL
 
+        searchBack.setOnClickListener { exitSearch() }
+        searchBar.addView(searchBack, LayoutParams(dp(48), LayoutParams.MATCH_PARENT))
+        searchGlass.isClickable = false
+        searchBox.addView(searchGlass, LayoutParams(dp(36), LayoutParams.MATCH_PARENT))
+        queryView.apply { textSize = 16f; maxLines = 1; gravity = Gravity.CENTER_VERTICAL }
+        searchBox.addView(queryView, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        searchClear.setOnClickListener { query.setLength(0); buildSearch() }
+        searchBox.addView(searchClear, LayoutParams(dp(40), LayoutParams.MATCH_PARENT))
+        searchBar.addView(searchBox, LayoutParams(0, dp(36), 1f).apply { rightMargin = dp(8) })
+        addView(searchBar, LayoutParams(LayoutParams.MATCH_PARENT, dp(46)))
+
+        searchOpen.setOnClickListener { startSearch() }
+        catBar.addView(searchOpen, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         for (i in 0..9) {
             val v = IconView(ctx, IconView.CAT + i)
             v.setOnClickListener { curCat = i; paintCats(); grid.scrollToIndex(catStart[i]) }
@@ -77,6 +114,8 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
 
         val content = FrameLayout(ctx)
         content.addView(grid, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        searchEmpty.apply { gravity = Gravity.CENTER; textSize = 14f; visibility = View.GONE }
+        content.addView(searchEmpty, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         kaoGrid.columnCount = 2
         kaoScroll.addView(kaoGrid)
         content.addView(kaoScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -88,7 +127,6 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
         content.addView(toneBar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(54), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(4) })
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
-        val bottom = LinearLayout(ctx).apply { gravity = Gravity.CENTER_VERTICAL }
         abc.apply { text = "ABC"; textSize = 14f; gravity = Gravity.CENTER; setTypeface(null, Typeface.BOLD); setOnClickListener { host.onClosePanel() } }
         bottom.addView(abc, LayoutParams(dp(64), dp(34)).apply { leftMargin = dp(8); rightMargin = dp(8) })
         tabEmoji.setOnClickListener { mode = 0; refresh() }
@@ -104,7 +142,7 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
 
         grid.onScrolled = { first ->
             var c = 0
-            for (k in 0..9) if (catStart[k] <= first) c = k
+            if (EmojiData.cats != null) for (k in 0..9) if (catStart[k] <= first) c = k
             if (c != curCat) { curCat = c; paintCats() }
         }
         grid.onTouchStart = { toneBar.visibility = View.GONE }
@@ -168,6 +206,8 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
                 ui.post { if (isAttachedToWindow) refresh() }
             }.start()
         }
+        searching = false
+        query.setLength(0)
         resetScroll = true
         refresh()
     }
@@ -175,6 +215,9 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
     /** Drops thumbnails and the emoji list so a closed panel holds almost no memory. */
     fun release() {
         stopDelete()
+        searching = false
+        query.setLength(0)
+        EmojiData.releaseNames()
         grid.setItems(emptyList(), false)
         kaoGrid.removeAllViews()
         colGrid.removeAllViews()
@@ -183,7 +226,9 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
 
     private fun refresh() {
         setBackgroundColor(if (transparent) Color.TRANSPARENT else theme.bg)
-        catBar.visibility = if (mode == 0) View.VISIBLE else View.GONE
+        searchBar.visibility = if (searching) View.VISIBLE else View.GONE
+        bottom.visibility = if (searching) View.GONE else View.VISIBLE
+        catBar.visibility = if (mode == 0 && !searching) View.VISIBLE else View.GONE
         grid.visibility = if (mode == 0) View.VISIBLE else View.GONE
         kaoScroll.visibility = if (mode == 1) View.VISIBLE else View.GONE
         colScroll.visibility = if (mode == 2) View.VISIBLE else View.GONE
@@ -194,8 +239,14 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
         tabKao.setTextColor(if (mode == 1) theme.accent else theme.dim)
         tabGif.setTextColor(if (mode == 2) theme.accent else theme.dim)
         del.color = theme.text
+        searchBack.color = theme.text
+        searchGlass.color = theme.dim
+        searchClear.color = theme.dim
+        searchOpen.color = theme.dim
+        searchBox.background = GradientDrawable().apply { setColor(theme.pill); cornerRadius = dp(18).toFloat() }
+        searchEmpty.setTextColor(theme.dim)
         when (mode) {
-            0 -> buildEmoji()
+            0 -> if (searching) buildSearch() else buildEmoji()
             1 -> buildKaomoji()
             else -> buildCollection()
         }
@@ -205,22 +256,83 @@ class EmojiPanel(private val ctx: Context, private val host: Host) : LinearLayou
         catIcons.forEachIndexed { i, v -> v.color = if (i == curCat) theme.accent else theme.dim }
     }
 
+    // ---------- search ----------
+
+    private fun startSearch() {
+        searching = true
+        query.setLength(0)
+        host.onEmojiSearch(true)
+        refresh()
+        Thread {
+            EmojiData.ensureNamesLoaded(ctx)
+            ui.post { if (searching && isAttachedToWindow) buildSearch() }
+        }.start()
+    }
+
+    private fun exitSearch() {
+        if (!searching) return
+        searching = false
+        query.setLength(0)
+        host.onEmojiSearch(false)
+        resetScroll = true
+        refresh()
+    }
+
+    /** Called by the host for every key typed while search is open. */
+    fun searchChar(s: String) {
+        if (!searching) return
+        val c = s.lowercase()
+        if (c == " " && (query.isEmpty() || query.last() == ' ')) return
+        if (query.length >= 30) return
+        query.append(c)
+        buildSearch()
+    }
+
+    fun searchBackspace() {
+        if (!searching || query.isEmpty()) return
+        val n = if (query.length >= 2 && Character.isLowSurrogate(query.last())) 2 else 1
+        query.setLength(query.length - n)
+        buildSearch()
+    }
+
+    /** Leaves search (used by Enter and by the keyboard's emoji key). */
+    fun closeSearch() = exitSearch()
+
+    private fun buildSearch() {
+        val q = query.toString().trim()
+        val found = if (q.isEmpty()) EmojiData.recents(ctx) else EmojiData.search(q)
+        val tone = prefs.skinTone
+        shownBases = found
+        queryView.setTextColor(if (query.isEmpty()) theme.dim else theme.text)
+        queryView.text = if (query.isEmpty()) (if (indo) "Cari emoji" else "Search emoji") else "$query|"
+        searchEmpty.text = if (indo) "Tidak ada hasil" else "No results"
+        searchEmpty.visibility = if (q.isNotEmpty() && found.isEmpty() && EmojiData.namesReady()) View.VISIBLE else View.GONE
+        grid.textColor = theme.text
+        grid.setItems(found.map { EmojiData.withTone(it, tone) }, false)
+    }
+
     /** Recents first, then every emoji in Unicode order, all in one list you can scroll through. */
     private fun buildEmoji() {
         val recents = EmojiData.recents(ctx)
         val tone = prefs.skinTone
         val all = ArrayList<String>(2100)
         val bases = ArrayList<String>(2100)
+        val starts = ArrayList<Int>(10)       // sections that actually exist, with their titles
+        val titles = ArrayList<String>(10)
         all.addAll(recents)
         bases.addAll(recents)
         catStart[0] = 0
+        if (recents.isNotEmpty()) { starts.add(0); titles.add(CAT_LABELS[0]) }
         EmojiData.cats?.forEachIndexed { gi, list ->
             catStart[gi + 1] = all.size
+            starts.add(all.size); titles.add(CAT_LABELS[gi + 1])
             for (e in list) { bases.add(e); all.add(EmojiData.withTone(e, tone)) }
         }
         shownBases = bases
+        searchEmpty.visibility = View.GONE
         grid.textColor = theme.text
-        grid.setItems(all, !resetScroll, catStart.copyOf())
+        // every section starts on its own row, under its own title
+        grid.setItems(all, !resetScroll, starts.toIntArray(), titles.toTypedArray())
         resetScroll = false
     }
 

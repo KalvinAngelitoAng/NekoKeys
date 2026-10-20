@@ -63,6 +63,72 @@ object EmojiData {
         return sb.toString()
     }
 
+    // ---------- search (names + keywords, English and Indonesian) ----------
+
+    /** One searchable emoji. nameWords come from the official names, keyWords from the CLDR keywords. */
+    private class Named(val emoji: String, val nameWords: List<String>, val keyWords: List<String>) {
+        /** Lower = better match; -1 = no match. */
+        fun score(t: String): Int {
+            if (t in nameWords) return 0
+            if (t in keyWords) return 2
+            if (nameWords.any { it.startsWith(t) }) return 3
+            if (keyWords.any { it.startsWith(t) }) return 5
+            if (t.length >= 3 && nameWords.any { it.contains(t) }) return 8
+            return -1
+        }
+    }
+
+    @Volatile private var named: List<Named>? = null
+
+    /** Loads assets/emoji_names.tsv (emoji TAB names TAB keywords). Safe to call from a background thread. */
+    fun ensureNamesLoaded(ctx: Context) {
+        if (named != null) return
+        ensureLoaded(ctx)
+        val lines = try {
+            ctx.applicationContext.assets.open("emoji_names.tsv").bufferedReader().use { it.readLines() }
+        } catch (e: Exception) { emptyList() }
+        loadNames(lines.asSequence())
+    }
+
+    /** Pure parsing step (also used by the JVM tests). Only emoji this phone can draw are searchable. */
+    fun loadNames(lines: Sequence<String>) {
+        val drawable = HashSet<String>()
+        cats?.forEach { drawable.addAll(it) }
+        val out = ArrayList<Named>(2000)
+        fun words(t: String) = t.split(' ', ':', '|').filter { it.isNotEmpty() }
+        for (l in lines) {
+            val p = l.split('\t')
+            if (p.size < 3 || (drawable.isNotEmpty() && p[0] !in drawable)) continue
+            out.add(Named(p[0], words(p[1]), words(p[2])))
+        }
+        named = out
+    }
+
+    fun namesReady() = named != null
+
+    /** Frees the search index; the panel calls this when it closes. */
+    fun releaseNames() { named = null }
+
+    /** Emoji whose name or keywords match every word of [query] (prefix match), best matches first. */
+    fun search(query: String, limit: Int = 150): List<String> {
+        val list = named ?: return emptyList()
+        val toks = query.lowercase().split(' ').filter { it.isNotEmpty() }
+        if (toks.isEmpty()) return emptyList()
+        val hits = ArrayList<IntArray>()          // [score, index in list]
+        for (i in list.indices) {
+            var total = 0
+            var ok = true
+            for (t in toks) {
+                val sc = list[i].score(t)
+                if (sc < 0) { ok = false; break }
+                total += sc
+            }
+            if (ok) hits.add(intArrayOf(total, i))
+        }
+        hits.sortWith(compareBy({ it[0] }, { it[1] }))
+        return hits.take(limit).map { list[it[1]].emoji }
+    }
+
     private fun sp(ctx: Context) = ctx.applicationContext.getSharedPreferences("emoji", Context.MODE_PRIVATE)
 
     fun recents(ctx: Context): List<String> =

@@ -219,6 +219,18 @@ object Icons {
         c.drawLine(cx, cy - s, cx, cy + s, p)
     }
 
+    fun search(c: Canvas, cx: Float, cy: Float, s: Float, p: Paint) {
+        stroke(p, s * 0.22f)
+        c.drawCircle(cx - s * 0.2f, cy - s * 0.2f, s * 0.7f, p)
+        c.drawLine(cx + s * 0.32f, cy + s * 0.32f, cx + s * 0.95f, cy + s * 0.95f, p)
+    }
+
+    fun close(c: Canvas, cx: Float, cy: Float, s: Float, p: Paint) {
+        stroke(p, s * 0.22f)
+        c.drawLine(cx - s * 0.7f, cy - s * 0.7f, cx + s * 0.7f, cy + s * 0.7f, p)
+        c.drawLine(cx + s * 0.7f, cy - s * 0.7f, cx - s * 0.7f, cy + s * 0.7f, p)
+    }
+
     // ---- emoji category icons: 0 recent, 1 smileys, 2 people, 3 animals, 4 food, 5 travel, 6 activity, 7 objects, 8 symbols, 9 flags
     fun cat(c: Canvas, idx: Int, cx: Float, cy: Float, s: Float, p: Paint) {
         when (idx) {

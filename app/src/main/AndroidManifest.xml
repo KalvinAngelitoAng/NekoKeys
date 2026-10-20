@@ -3,7 +3,7 @@
 
     <!-- PRIVACY: no network permission is declared, so Android itself blocks any data from leaving the device.
          The only permission is READ_MEDIA_IMAGES: optional (runtime prompt, off by default), used only to
-         preview your newest screenshots in the clipboard panel. -->
+         preview your newest screenshots in the clipboard panel and to offer the newest one as a pill above the keys. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 

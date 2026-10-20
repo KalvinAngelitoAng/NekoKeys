@@ -212,6 +212,30 @@ object Screenshots {
 
     fun granted(ctx: Context) = ctx.checkSelfPermission(permission()) == PackageManager.PERMISSION_GRANTED
 
+    /** The newest screenshot and when it was added (epoch millis), or null. One tiny query; call off the main thread. */
+    class Newest(val shot: Shot, val id: Long, val addedMs: Long)
+
+    fun newest(ctx: Context): Newest? {
+        if (!granted(ctx)) return null
+        try {
+            val args = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?")
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf("%Screenshots%"))
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, "${MediaStore.Images.Media.DATE_ADDED} DESC")
+                putInt(ContentResolver.QUERY_ARG_LIMIT, 1)
+            }
+            val proj = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.MIME_TYPE, MediaStore.Images.Media.DATE_ADDED)
+            ctx.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj, args, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val id = c.getLong(0)
+                    val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                    return Newest(Shot(uri, c.getString(1) ?: "image/png"), id, c.getLong(2) * 1000L)
+                }
+            }
+        } catch (e: Exception) { }
+        return null
+    }
+
     fun recent(ctx: Context, n: Int): List<Shot> {
         if (!granted(ctx)) return emptyList()
         val out = ArrayList<Shot>()

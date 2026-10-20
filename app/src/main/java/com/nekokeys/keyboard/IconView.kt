@@ -12,6 +12,7 @@ class IconView(context: Context, kind: Int = GHOST, color: Int = Color.WHITE) : 
         const val GHOST = 0; const val CHECK = 1; const val CLIP = 2; const val TRASH = 3
         const val PIN = 4; const val BACK = 5; const val ONEHAND = 6; const val SWAP = 7; const val EXPAND = 8
         const val FACE = 9; const val GEAR = 10; const val PLUS = 11; const val BACKSPACE = 12; const val NEKO = 13
+        const val SEARCH = 14; const val CLOSE = 15
         const val CAT = 100 // CAT + n = emoji category n
     }
 
@@ -45,6 +46,8 @@ class IconView(context: Context, kind: Int = GHOST, color: Int = Color.WHITE) : 
             PLUS -> Icons.plus(c, cx, cy, s, p)
             BACKSPACE -> Icons.backspace(c, cx, cy, s, p)
             NEKO -> Icons.neko(c, cx, cy, s * 1.1f, p)
+            SEARCH -> Icons.search(c, cx, cy, s, p)
+            CLOSE -> Icons.close(c, cx, cy, s, p)
             else -> if (kind >= CAT) Icons.cat(c, kind - CAT, cx, cy, s, p)
         }
     }

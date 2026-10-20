@@ -52,6 +52,8 @@ NekoKeys is a high-performance custom Input Method Editor (IME) designed as a co
 - **Complete Emoji Support:** 1,914 emojis (Emoji 17.0 compatible)
 - **Single Scroll View:** All emojis in optimized scrollable layout
 - **Category Navigation:** Icon-based quick-jump to emoji categories
+- **Section Titles:** Every category has its own title ("Recent emoji", "Smileys and emotions", ...), in English or Indonesian following the phone language
+- **Emoji Search:** Search by name or keyword in English and Indonesian (offline, 212 KB of data bundled in the APK); the keyboard stays on screen while you type
 - **Advanced Features:**
   - Skin tone modifiers
   - Recency tracking for frequently-used emojis
@@ -63,6 +65,7 @@ NekoKeys is a high-performance custom Input Method Editor (IME) designed as a co
   - Pin/unpin functionality
   - Automatic cleanup
   - Optional latest screenshot access
+  - **Clipboard pill:** text, image or screenshot you just copied appears in the suggestion bar (like Gboard); tap to paste, ✕ to dismiss. It disappears after 2 minutes or when you start typing, and never appears in password fields
 - **One-Handed Mode:** Optimized layout for single-hand operation
 - **Cursor Navigation:** Spacebar swiping for cursor movement
 - **Batch Delete:** Multi-word deletion via delete key swipe

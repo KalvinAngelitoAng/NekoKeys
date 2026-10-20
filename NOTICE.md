@@ -23,3 +23,6 @@ Aplikasi tidak mengunduh apa pun: kamus hanya dibaca dari dalam APK.
 **muan/unicode-emoji-json** (MIT), yang dihasilkan dari daftar emoji resmi **Unicode Consortium**.
 Emoji yang tidak bisa digambar oleh font HP disaring otomatis saat dijalankan.
 
+`app/src/main/assets/emoji_names.tsv` (nama dan kata kunci pencarian emoji, bahasa Inggris dan Indonesia) dibuat oleh
+`tools/build_emoji_names.py` dari **Unicode CLDR annotations** (paket npm `cldr-annotations-full` dan
+`cldr-annotations-derived-full`, lisensi **Unicode-3.0**). File ini hanya dibaca dari dalam APK, tidak ada yang diunduh.
