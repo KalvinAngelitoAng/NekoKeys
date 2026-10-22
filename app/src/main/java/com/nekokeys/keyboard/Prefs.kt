@@ -41,6 +41,12 @@ class Prefs(context: Context) {
     var autoCorrect: Boolean
         get() = b("autoCorrect", true)
         set(v) = put("autoCorrect", v)
+    var acLevel: Int // how sure autocorrect must be: 0 = careful, 1 = balanced, 2 = eager (index into Tune.levelTau)
+        get() = i("acLevel", 1)
+        set(v) = put("acLevel", v)
+    var emojiSuggest: Boolean
+        get() = b("emojiSuggest", true)
+        set(v) = put("emojiSuggest", v)
     var learning: Boolean
         get() = b("learning", true)
         set(v) = put("learning", v)

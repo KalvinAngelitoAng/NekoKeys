@@ -38,7 +38,10 @@ import java.util.concurrent.Executors
 class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, EmojiPanel.Host {
 
     private class Correction(val original: String, val fixed: String, val sep: String)
-    private class Sugg(val vals: Array<String?>, val toolbar: Boolean, val secure: Boolean, val literal: Boolean)
+    /** [literalIdx]: slot that shows the typed word in quotes (what space will keep), or -1. [emoji]: emoji offered in the last slot. */
+    private class Sugg(val vals: Array<String?>, val toolbar: Boolean, val secure: Boolean, val literalIdx: Int, val emoji: String? = null)
+    private var emojiSlot = -1
+    private fun acTau() = Tune.levelTau[prefs.acLevel.coerceIn(0, Tune.levelTau.size - 1)]
 
     private val langNames = arrayOf("English", "Indonesia", "EN • ID")
 
@@ -116,7 +119,7 @@ class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, Emo
     private var swipeAnchor = -1
     private var swipeText: CharSequence = ""
     private var swipeLen = 0
-    private var seq = 0
+    @Volatile private var seq = 0
 
     private val syncRun = Runnable { syncFromEditor() }
     private val suggRun = Runnable { requestSuggestions() }
@@ -367,6 +370,7 @@ class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, Emo
         syncFromEditor()
         startShotWatch()
         refreshPill()
+        if (prefs.emojiSuggest && !EmojiData.wordsReady()) Thread { EmojiData.ensureWordsLoaded(this) }.start()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -528,7 +532,7 @@ class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, Emo
         val w = word.toString()
         var final = w
         if (autoCorrectOn() && !w.endsWith("'")) {
-            val fix = predictor.correct(w, prevWord, lang)
+            val fix = predictor.correct(w, prevWord, lang, acTau())
             if (fix != null && fix != w) {
                 ic.deleteSurroundingText(w.length, 0)
                 ic.commitText(fix, 1)
@@ -817,19 +821,17 @@ class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, Emo
         val watch = prefs.screenshots && Screenshots.granted(this)
         val mine = ++pillSeq
         if (!watch) { setPill(sync); return }
-        try {
-            exec?.execute {
-                val shot = Screenshots.newest(this)
-                ui.post {
-                    if (destroyed || mine != pillSeq) return@post
-                    val now = System.currentTimeMillis()
-                    val s = if (shot != null && now - shot.addedMs <= PILL_TTL_MS)
-                        PillData("s${shot.id}", shot.addedMs, null, shot.shot.uri, shot.shot.mime, null, "Screenshot")
-                    else null
-                    setPill(if (s != null && (sync == null || s.time > sync.time)) s else sync)
-                }
-            } ?: setPill(sync)
-        } catch (e: Exception) { setPill(sync) }
+        Thread {                                    // its own thread: never queue behind (or in front of) suggestions
+            val shot = Screenshots.newest(this)
+            ui.post {
+                if (destroyed || mine != pillSeq) return@post
+                val now = System.currentTimeMillis()
+                val s = if (shot != null && now - shot.addedMs <= PILL_TTL_MS)
+                    PillData("s${shot.id}", shot.addedMs, null, shot.shot.uri, shot.shot.mime, null, "Screenshot")
+                else null
+                setPill(if (s != null && (sync == null || s.time > sync.time)) s else sync)
+            }
+        }.start()
     }
 
     private fun noteCopiedImage() {
@@ -867,8 +869,10 @@ class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, Emo
     /** The pill takes the toolbar's place while the field is empty; typing or a secure field brings the bar back. */
     private fun applyPill() {
         val show = pillData != null && barToolbarMode
-        pillRow.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) toolbar.visibility = View.GONE else if (barToolbarMode) toolbar.visibility = View.VISIBLE
+        val pv = if (show) View.VISIBLE else View.GONE
+        val tv = if (barToolbarMode && !show) View.VISIBLE else View.GONE
+        if (pillRow.visibility != pv) pillRow.visibility = pv      // touching visibility forces a layout pass
+        if (toolbar.visibility != tv) toolbar.visibility = tv
     }
 
     private fun dismissPill() {
@@ -930,45 +934,79 @@ class NekoIME : InputMethodService(), KeyboardView.Listener, ClipPanel.Host, Emo
         val cap = kb.shift != 0
         val sec = secure
         val on = prefs.suggestions
+        val tau = acTau()
+        val emojiOn = prefs.emojiSuggest && !glideActive
         val mine = ++seq
         exec?.execute {
-            val r = computeSugg(w, prev, l, ac, cap, sec, on)
+            if (mine != seq) return@execute          // a newer key press already replaced this request: do not compute it
+            val r = computeSugg(w, prev, l, ac, cap, sec, on, tau, emojiOn)
             ui.post { if (!destroyed && mine == seq) showSugg(r) }
         }
     }
 
-    private fun computeSugg(w: String, prev: String, l: Int, ac: Boolean, cap: Boolean, sec: Boolean, on: Boolean): Sugg {
-        if (sec) return Sugg(arrayOfNulls(3), false, true, false)
-        if (!on || (w.isEmpty() && prev.isEmpty())) return Sugg(arrayOfNulls(3), true, false, false)
+    private fun computeSugg(w: String, prev: String, l: Int, ac: Boolean, cap: Boolean, sec: Boolean, on: Boolean,
+                            tau: Double, emojiOn: Boolean): Sugg {
+        if (sec) return Sugg(arrayOfNulls(3), false, true, -1)
+        if (!on || (w.isEmpty() && prev.isEmpty())) return Sugg(arrayOfNulls(3), true, false, -1)
         val unknown = w.isNotEmpty() && !predictor.isKnown(w, l)
         val list = ArrayList<String>()
-        if (unknown && ac) predictor.correct(w, prev, l)?.let { list.add(it) }
+        var applies = false   // will space replace the typed word by the first entry?
+        if (unknown && ac) {
+            val fix = predictor.correction(w, prev, l)
+            if (fix != null) {
+                list.add(fix.word)
+                for (o in fix.others) if (o !in list) list.add(o)
+                applies = fix.confidence >= tau
+            }
+        }
         for (s in predictor.suggest(w, prev, l, 3)) {
             val c = Predictor.properCase(s, w, cap)
             if (c !in list && c != w) list.add(c)
         }
         val arr = arrayOfNulls<String>(3)
-        if (unknown) { arr[0] = w; arr[1] = list.getOrNull(0); arr[2] = list.getOrNull(1) }
-        else { arr[1] = list.getOrNull(0); arr[0] = list.getOrNull(1); arr[2] = list.getOrNull(2) }
-        return Sugg(arr, false, false, unknown)
+        if (unknown) {
+            // the middle slot always shows what space will do: the correction when we are sure, else the word as typed
+            if (applies) { arr[0] = w; arr[1] = list.getOrNull(0); arr[2] = list.getOrNull(1); return Sugg(arr, false, false, 0) }
+            arr[0] = list.getOrNull(0); arr[1] = w; arr[2] = list.getOrNull(1)
+            return Sugg(arr, false, false, 1)
+        }
+        arr[1] = list.getOrNull(0); arr[0] = list.getOrNull(1); arr[2] = list.getOrNull(2)
+        var emoji: String? = null
+        if (emojiOn && w.length >= 2 && EmojiData.wordsReady()) {     // loaded in the background, see onStartInputView
+            emoji = EmojiData.emojiFor(w.lowercase())
+            if (emoji != null) arr[2] = emoji
+        }
+        return Sugg(arr, false, false, -1, emoji)
     }
 
     private fun showSugg(r: Sugg) {
         for (i in 0..2) {
             vals[i] = r.vals[i]
-            slots[i].text = if (i == 0 && r.literal) "\"${r.vals[0]}\"" else (r.vals[i] ?: "")
+            slots[i].text = if (i == r.literalIdx) "\"${r.vals[i]}\"" else (r.vals[i] ?: "")
         }
+        emojiSlot = if (r.emoji != null) 2 else -1
         if (r.secure) slots[1].text = "Kolom aman"
         val showTool = r.toolbar
-        toolbar.visibility = if (showTool) View.VISIBLE else View.GONE
         suggRow.visibility = if (showTool) View.GONE else View.VISIBLE
         barToolbarMode = showTool
-        applyPill()
+        applyPill()                                   // also decides the toolbar's visibility
+    }
+
+    /** The emoji slot was tapped: keep the typed word and add the emoji after it. */
+    private fun pickEmoji(ic: InputConnection, e: String) {
+        if (word.isNotEmpty()) finishWord(ic, " ")      // learns the word; it is a known word, so nothing is corrected
+        ic.commitText(" $e ", 1)
+        EmojiData.addRecent(this, e)
+        lastCorrection = null
+        spaceFromSuggestion = true
+        updateSuggestions()
+        scheduleSync()
     }
 
     private fun pick(i: Int) {
         val s = vals[i] ?: return
         val ic = currentInputConnection ?: return
+        if (i == emojiSlot && !glideActive) { pickEmoji(ic, s); return }
         if (glideActive) { replaceGlide(ic, s); return }
         if (word.isNotEmpty()) ic.deleteSurroundingText(word.length, 0)
         ic.commitText("$s ", 1)

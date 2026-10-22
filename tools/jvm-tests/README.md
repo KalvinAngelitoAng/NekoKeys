@@ -10,6 +10,21 @@ Context palsu. Butuh `kotlinc` 1.9.x dan `android.jar` (API 34).
     java -cp testout:out:android.jar:kotlin-stdlib.jar Test8Kt    # emoji: kelengkapan dan warna kulit
     java -cp testout:out:android.jar:kotlin-stdlib.jar Test10Kt   # ketahanan: mati mendadak, file rusak, data lama, thread, batas clipboard
 
+`Test14` adalah "ujian" autocorrect: ia mengukur berapa typo yang benar diperbaiki, berapa yang salah diperbaiki, dan berapa
+**kata benar yang tidak ada di kamus** (nama, gaul, kata langka) yang salah diubah. Ia juga melatih bobot gate keyakinan
+(`Tune.gateW`) dari separuh data dan mengujinya di separuh lainnya. Jalankan ulang setelah mengubah kamus atau skor, lalu
+salin baris `Tune.gateW = ...` di akhir keluarannya ke `Predictor.kt`. Data dibuat dengan `python3 tools/build_eval_data.py`
+(`pip install codespell faker`). Butuh sekitar 3 menit dan `-Xmx2g`:
+
+    kotlinc -no-stdlib -cp out:android.jar:kotlin-stdlib.jar -d testout14 tools/jvm-tests/Test14.kt
+    java -Xmx2g -cp testout14:out:android.jar:kotlin-stdlib.jar Test14Kt 800
+
+`Test12` (pencarian emoji) dan `Test13` (tata letak grid emoji: judul kategori, tiap kategori mulai di baris baru) berdiri sendiri
+dan dikompilasi terpisah, karena fungsi bantunya bernama sama dengan tes lain:
+
+    kotlinc -no-stdlib -cp out:android.jar:kotlin-stdlib.jar -d testout12 tools/jvm-tests/Test12.kt && java -cp testout12:out:android.jar:kotlin-stdlib.jar Test12Kt
+    kotlinc -no-stdlib -cp out:android.jar:kotlin-stdlib.jar -d testout13 tools/jvm-tests/Test13.kt && java -cp testout13:out:android.jar:kotlin-stdlib.jar Test13Kt
+
 Simulasi pemakaian 10 tahun (7,3 juta kata, sekitar 40 detik) dan ukuran memori data belajar:
 
     kotlinc ... -d testout9 tools/jvm-tests/Test9.kt && java -Xmx2g -cp testout9:out:android.jar:kotlin-stdlib.jar Test9Kt 2000 10

@@ -106,6 +106,37 @@ object EmojiData {
 
     fun namesReady() = named != null
 
+    // ---------- emoji suggestion for a typed word ----------
+
+    @Volatile private var wordEmoji: Map<String, String>? = null
+
+    /** Loads assets/emoji_words.tsv (word TAB emoji). Safe to call from a background thread; cheap once loaded. */
+    fun ensureWordsLoaded(ctx: Context) {
+        if (wordEmoji != null) return
+        ensureLoaded(ctx)
+        val lines = try {
+            ctx.applicationContext.assets.open("emoji_words.tsv").bufferedReader().use { it.readLines() }
+        } catch (e: Exception) { emptyList() }
+        loadWords(lines.asSequence())
+    }
+
+    /** Pure parsing step (also used by the JVM tests). Only emoji this phone can draw are offered. */
+    fun loadWords(lines: Sequence<String>) {
+        val drawable = HashSet<String>()
+        cats?.forEach { drawable.addAll(it) }
+        val m = HashMap<String, String>(1200)
+        for (l in lines) {
+            val p = l.split('\t')
+            if (p.size == 2 && (drawable.isEmpty() || p[1] in drawable)) m[p[0]] = p[1]
+        }
+        wordEmoji = m
+    }
+
+    fun wordsReady() = wordEmoji != null
+
+    /** The emoji to offer after the (lowercase) [word] was typed, or null. */
+    fun emojiFor(word: String): String? = wordEmoji?.get(word)
+
     /** Frees the search index; the panel calls this when it closes. */
     fun releaseNames() { named = null }
 

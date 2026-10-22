@@ -161,6 +161,10 @@ class SettingsActivity : Activity() {
         switchRow("Glide typing", "Geser jari melewati huruf untuk mengetik satu kata", { prefs.glide }) { prefs.glide = it }
         switchRow("Saran kata", "Tampil di atas keyboard", { prefs.suggestions }) { prefs.suggestions = it }
         switchRow("Koreksi otomatis", "Backspace langsung membatalkan koreksi", { prefs.autoCorrect }) { prefs.autoCorrect = it }
+        segments("Seberapa berani koreksi otomatis", listOf("Hati-hati", "Seimbang", "Berani"), { prefs.acLevel }) { prefs.acLevel = it }
+        card.addView(label("Hati-hati hanya mengganti kata kalau sangat yakin. Berani lebih sering mengganti, tapi lebih sering salah. Kalau ragu, kata aslimu tetap dan pilihannya muncul di bar saran.", 12f, SUB, false)
+            .apply { setPadding(0, dp(4), 0, dp(4)) })
+        switchRow("Saran emoji", "Emoji muncul di bar saran setelah kata seperti \"love\" atau \"kucing\"", { prefs.emojiSuggest }) { prefs.emojiSuggest = it }
         switchRow("Spasi dua kali jadi titik", null, { prefs.doubleSpace }) { prefs.doubleSpace = it }
         card.addView(label("Tip: tahan spasi untuk ganti bahasa, geser di spasi untuk memindah kursor, geser tombol hapus ke kiri untuk menghapus beberapa kata.", 13f, SUB, false)
             .apply { setPadding(0, dp(12), 0, 0) })

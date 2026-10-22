@@ -29,7 +29,13 @@ fun main() {
     f.set(pr, listOf(dictOf(assets + "words_en.txt"), dictOf(assets + "words_id.txt")))
 
     for ((typed, want) in listOf("thnks" to "thanks", "helo" to "hello", "selmat" to "selamat", "dont" to "don't", "yuo" to "you", "wiht" to "with", "becuase" to "because", "tomorow" to "tomorrow", "frend" to "friend", "pelase" to "please", "helllo" to "hello", "thier" to "their", "jgn" to null))
-        check("correct $typed -> $want", pr.correct(typed, "", 2) == want, "got=${pr.correct(typed, "", 2)}")
+        check("best candidate $typed -> $want", pr.correction(typed, "", 2)?.word == want, "got=${pr.correction(typed, "", 2)?.word}")
+    // Autocorrect only applies a correction it is sure about (Tune.minConf); otherwise the word is left and offered in the bar.
+    for ((typed, want) in listOf("becuase" to "because", "tomorow" to "tomorrow", "dont" to "don't", "yuo" to "you", "wiht" to "with", "pelase" to "please", "helllo" to "hello"))
+        check("applied: $typed -> $want", pr.correct(typed, "", 2) == want, "got=${pr.correct(typed, "", 2)}  conf=${pr.correction(typed, "", 2)?.confidence}")
+    check("unsure typo is left alone but offered", pr.correct("frend", "", 2, 0.99) == null && pr.correction("frend", "", 2)?.word == "friend")
+    check("a rare valid word is not forced into another word", pr.correct("Kalvin", "", 0) == null && pr.correct("gojek", "", 2) == null,
+        "Kalvin=${pr.correct("Kalvin", "", 0)} gojek=${pr.correct("gojek", "", 2)}")
     check("teh -> the (English mode)", pr.correct("teh", "", 0) == "the", "got=${pr.correct("teh", "", 0)}")
     check("teh untouched in EN+ID mode (it is Indonesian for tea)", pr.correct("teh", "", 2) == null)
     check("valid word untouched", pr.correct("hello", "", 2) == null && pr.correct("makan", "", 2) == null)

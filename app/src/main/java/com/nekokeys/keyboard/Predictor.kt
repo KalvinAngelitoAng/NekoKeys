@@ -3,6 +3,7 @@ package com.nekokeys.keyboard
 import android.content.Context
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -20,6 +21,11 @@ object Tune {
     @JvmField var glideDist = 4.0
     @JvmField var glidePrior = 0.35
     @JvmField var missMax = 0.9   // glide: every letter of a word must be within this many key widths of the path
+    // autocorrect gate: a tiny logistic model says how likely a correction is right (see Predictor.gateProb)
+    // Trained by tools/jvm-tests/Test14.kt (the autocorrect exam) -- retrain it after changing the dictionaries or the scoring.
+    @JvmField var gateW = doubleArrayOf(-1.846, 2.690, 0.954, 0.261, 1.993, -1.140, -1.621)
+    @JvmField var minConf = 0.55  // apply a correction only when that probability is at least this (0 = always)
+    @JvmField var levelTau = doubleArrayOf(0.85, 0.55, 0.30)   // careful / balanced / eager (settings: acLevel)
 }
 
 /**
@@ -90,6 +96,32 @@ class Predictor private constructor(private val ctx: Context) {
             }
         }
 
+        /** Number of inputs of the autocorrect gate. */
+        const val GATE_N = 7
+
+        /** What the gate looks at: how good, how clear, how close the best correction is, and what kind of word was typed. */
+        fun gateFeatures(typed: String, c: List<Cand>): DoubleArray {
+            val top = c[0]
+            val margin = if (c.size > 1) min(top.score - c[1].score, 6.0) else 6.0
+            val crowd = c.drop(1).count { top.score - it.score < 1.0 }.coerceAtMost(4)
+            return doubleArrayOf(
+                1.0,
+                top.score / 4.0,
+                margin / 3.0,
+                top.dist,
+                min(typed.length, 12) / 6.0,
+                if (typed[0].isUpperCase()) 1.0 else 0.0,
+                crowd / 2.0
+            )
+        }
+
+        /** Probability (0..1) that applying the best correction is right, from [gateFeatures] and the weights [w]. */
+        fun gateProb(f: DoubleArray, w: DoubleArray = Tune.gateW): Double {
+            var z = 0.0
+            for (i in f.indices) z += f[i] * w[i]
+            return 1.0 / (1.0 + exp(-z))
+        }
+
         fun properCase(s: String, typed: String, cap: Boolean = false): String {
             var r = when {
                 typed.length > 1 && typed.all { it.isUpperCase() } -> s.uppercase()
@@ -131,6 +163,9 @@ class Predictor private constructor(private val ctx: Context) {
         "asdfghjkl".forEachIndexed { i, c -> put(c, Pair(i + 0.25f, 1f)) }
         "zxcvbnm".forEachIndexed { i, c -> put(c, Pair(i + 0.75f, 2f)) }
     }
+
+    private val kx = FloatArray(26) { pos['a' + it]!!.first }    // key centre of each letter (fast lookup for the edit distance)
+    private val ky = FloatArray(26) { pos['a' + it]!!.second }
 
     /** bit j of adjMask[i] set when letter j is a neighbour of (or equal to) letter i on QWERTY. */
     private val adjMask = IntArray(26).also { m ->
@@ -417,19 +452,46 @@ class Predictor private constructor(private val ctx: Context) {
         return scored.entries.sortedByDescending { it.value }.take(n).map { it.key }
     }
 
-    /** Returns the corrected word (case-matched) or null when the word should be left alone. */
-    @Synchronized fun correct(word: String, prev: String, lang: Int): String? {
+    /** A correction candidate: the word (lowercase), its score and its keyboard-aware edit distance from what was typed. */
+    class Cand(val word: String, val score: Double, val dist: Double)
+
+    /** A possible correction: the best word (case-matched), how likely it is right (0..1) and the next best words. */
+    class Fix(val word: String, val confidence: Double, val others: List<String>)
+
+    /**
+     * Candidate corrections for an unknown word, best first (at most 8).
+     * Empty when the word should be left alone (already valid, a name, too short, nothing close...).
+     */
+    @Synchronized fun rank(word: String, prev: String, lang: Int): List<Cand> {
         val lw = word.lowercase()
-        if (lw.length < 2 || lw.length > 30 || lw.any { it.isDigit() }) return null
-        if (word.drop(1).any { it.isUpperCase() }) return null          // iPhone, NASA, ...
-        if (word[0].isUpperCase() && prev.isNotEmpty()) return null     // probably a name
-        if (lw.endsWith("'")) return null
+        if (lw.length < 2 || lw.length > 30 || lw.any { it.isDigit() }) return emptyList()
+        if (word.drop(1).any { it.isUpperCase() }) return emptyList()          // iPhone, NASA, ...
+        if (word[0].isUpperCase() && prev.isNotEmpty()) return emptyList()     // probably a name
+        if (lw.endsWith("'")) return emptyList()
         val ds = dictsFor(lang)
-        if (ds.isEmpty()) return null
-        if (ds.any { it.second.freqOf(lw) > 0 } || (userCounts[lw] ?: 0) >= 2) return null // already a valid word
+        if (ds.isEmpty()) return emptyList()
+        if (ds.any { it.second.freqOf(lw) > 0 } || (userCounts[lw] ?: 0) >= 2) return emptyList() // already a valid word
         val maxD = if (lw.length <= 3) 1.0 else 1.6
-        val best = fuzzy(lw, prev, ds, lang, maxD).maxByOrNull { it.second } ?: return null
-        return properCase(best.first, word)
+        val best = HashMap<String, Cand>()
+        for (c in fuzzy(lw, prev, ds, lang, maxD)) {
+            val old = best[c.first]
+            if (old == null || old.score < c.second) best[c.first] = Cand(c.first, c.second, c.third)
+        }
+        return best.values.sortedByDescending { it.score }.take(8)
+    }
+
+    /** The best correction with its confidence, whether or not it is sure enough to apply. */
+    @Synchronized fun correction(word: String, prev: String, lang: Int): Fix? {
+        val r = rank(word, prev, lang)
+        if (r.isEmpty()) return null
+        val conf = gateProb(gateFeatures(word, r))
+        return Fix(properCase(r[0].word, word), conf, r.drop(1).take(2).map { properCase(it.word, word) })
+    }
+
+    /** Returns the corrected word (case-matched) or null when the word should be left alone (or we are not sure). */
+    @Synchronized fun correct(word: String, prev: String, lang: Int, minConf: Double = Tune.minConf): String? {
+        val f = correction(word, prev, lang) ?: return null
+        return if (f.confidence >= minConf) f.word else null
     }
 
     private fun bigramBoost(prev: String, w: String): Double {
@@ -445,14 +507,14 @@ class Predictor private constructor(private val ctx: Context) {
                 for (idx in d.byLen[len]) {
                     val w = d.words[idx]
                     if (lw[0] != w[0] && !(n > 1 && w.length > 1 && lw[1] == w[1])) continue
-                    val dist = editDist(lw, w)
+                    val dist = editDist(lw, w, maxD)
                     if (dist <= maxD) out.add(Triple(w, Tune.prior * ln(d.freq[idx] + 1.0) - Tune.distW * dist + bigramBoost(prev, w) + boost(di, lang), dist))
                 }
             }
         }
         for ((w, c) in userCounts) {
             if (c < 2 || abs(w.length - n) > 2) continue
-            val dist = editDist(lw, w)
+            val dist = editDist(lw, w, maxD)
             if (dist <= maxD) out.add(Triple(w, 8.0 + ln(c + 1.0) - Tune.distW * dist, dist))
         }
         return out
@@ -477,28 +539,44 @@ class Predictor private constructor(private val ctx: Context) {
     }
 
     private fun subCost(a: Char, b: Char): Double {
-        val pa = pos[a]
-        val pb = pos[b]
-        if (pa == null || pb == null) return Tune.otherSub
-        val dx = pa.first - pb.first
-        val dy = pa.second - pb.second
+        if (a !in 'a'..'z' || b !in 'a'..'z') return Tune.otherSub
+        val dx = kx[a - 'a'] - kx[b - 'a']
+        val dy = ky[a - 'a'] - ky[b - 'a']
         return if (dx * dx + dy * dy <= 2.0f) Tune.adjSub else Tune.otherSub
     }
 
-    private fun editDist(a: String, b: String): Double {
+    private val dcBuf = DoubleArray(34)
+    private val icBuf = DoubleArray(34)
+
+    /**
+     * Keyboard-aware edit distance. When the result is certain to be above [limit] it gives up early and returns 99,
+     * which is fine for callers that only compare against the limit: costs are never negative, so every later
+     * row of the table is at least as big as the smallest value of the last two rows.
+     */
+    private fun editDist(a: String, b: String, limit: Double = Double.MAX_VALUE): Double {
         val n = a.length
         val m = b.length
         if (n > 32 || m > 32 || abs(n - m) > 2) return 99.0
+        for (i in 1..n) dcBuf[i] = delCost(a, i)       // computed once per word instead of twice per table cell
+        for (j in 1..m) icBuf[j] = insCost(b, j)
         mat[0][0] = 0.0
-        for (i in 1..n) mat[i][0] = mat[i - 1][0] + delCost(a, i)
-        for (j in 1..m) mat[0][j] = mat[0][j - 1] + insCost(b, j)
-        for (i in 1..n) for (j in 1..m) {
+        for (i in 1..n) mat[i][0] = mat[i - 1][0] + dcBuf[i]
+        for (j in 1..m) mat[0][j] = mat[0][j - 1] + icBuf[j]
+        var prevMin = 0.0                               // smallest value in the previous row (row 0 starts at 0)
+        for (i in 1..n) {
             val ca = a[i - 1]
-            val cb = b[j - 1]
-            val sub = if (ca == cb) 0.0 else subCost(ca, cb)
-            var v = min(mat[i - 1][j - 1] + sub, min(mat[i - 1][j] + delCost(a, i), mat[i][j - 1] + insCost(b, j)))
-            if (i > 1 && j > 1 && ca == b[j - 2] && a[i - 2] == cb) v = min(v, mat[i - 2][j - 2] + Tune.trans)
-            mat[i][j] = v
+            val di = dcBuf[i]
+            var rowMin = mat[i][0]
+            for (j in 1..m) {
+                val cb = b[j - 1]
+                val sub = if (ca == cb) 0.0 else subCost(ca, cb)
+                var v = min(mat[i - 1][j - 1] + sub, min(mat[i - 1][j] + di, mat[i][j - 1] + icBuf[j]))
+                if (i > 1 && j > 1 && ca == b[j - 2] && a[i - 2] == cb) v = min(v, mat[i - 2][j - 2] + Tune.trans)
+                mat[i][j] = v
+                if (v < rowMin) rowMin = v
+            }
+            if (min(rowMin, prevMin) > limit) return 99.0
+            prevMin = rowMin
         }
         return mat[n][m]
     }
